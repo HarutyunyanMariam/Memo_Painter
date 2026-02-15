@@ -22,8 +22,9 @@
 
 ### Color featre : RGB values
 # For pokemon
-python main.py --color_feat_dim 30 --color_info RGB --test_data_path ./pokemon_test/ --data_name poke_test --mem_model ./model/pokemon/memory_099.pt --generator_model ./model/pokemon/generator_099.pt --mode test
+#python main.py --color_feat_dim 30 --color_info RGB --test_data_path ./pokemon_test/ --data_name poke_test --mem_model ./model/pokemon/memory_099.pt --generator_model ./model/pokemon/generator_099.pt --mode test
 
 # For oxford102
-python main.py --color_feat_dim 30 --color_info RGB --test_data_path ./oxford102/test/ --data_name flower_test --mem_model ./model/Flower/memory_028.pt --genarator_model ./model/Flower/generator_028.pt --mode test
+#python main.py --color_feat_dim 30 --color_info RGB --test_data_path ./oxford102/test/ --data_name flower_test --mem_model ./model/Flower/memory_028.pt --genarator_model ./model/Flower/generator_028.pt --mode test
 
+python main.py --mode train --color_info dist --color_feat_dim 313 --mem_size 7861 --train_data_path ./dataset/102flowers/train --test_data_path ./dataset/102flowers/test --epoch 30 --model_save_freq 1 --color_thres 0.8 --data_name Flower  --batch_size 16 --resume_epoch 28 --model_path  /content/drive/MyDrive/FlowerModels --result_path /content/drive/MyDrive/FlowerResults

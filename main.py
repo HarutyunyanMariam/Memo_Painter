@@ -38,6 +38,8 @@ parser.add_argument("--test_with_train", type = str2bool, default = True)
 parser.add_argument("--test_freq", type = int, default = 2)
 parser.add_argument("--model_save_freq", type = int, default = 1)
 parser.add_argument("--test_only", type = str2bool, default = False)
+parser.add_argument("--resume_epoch", type=int, default=-1,
+                    help="Resume training from this epoch (-1 means start fresh)")
 
 args = parser.parse_args()
 
