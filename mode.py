@@ -113,7 +113,7 @@ def train(args):
             print(f'batch {i}')
             res_input = batch["res_input"].to(device)
             color_feat = batch["color_feat"].to(device)
-            l_channel = (batch["l_channel"] / 100.0).to(device)
+            l_channel = (batch["l_channel"] / 255.0).to(device)
             ab_channel = (batch["ab_channel"] / 110.0).to(device)
             idx = batch["index"].to(device)
            
@@ -253,7 +253,7 @@ def test_operation(args, generator, mem, te_dataloader, device, e=-1):
         for i, batch in enumerate(te_dataloader):
             res_input = batch["res_input"].to(device)
             color_feat = batch["color_feat"].to(device)
-            l_channel = (batch["l_channel"] / 100.0).to(device)
+            l_channel = (batch["l_channel"] / 255.0).to(device)
             ab_channel = (batch["ab_channel"] / 110.0).to(device)
            
             bs = res_input.size()[0]
