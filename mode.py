@@ -1,3 +1,5 @@
+# model.py
+
 import os
 import torch
 import torch.nn as nn
@@ -13,186 +15,221 @@ import numpy as np
 from PIL import Image
 
 
-
-
-
-
-
-
+# =========================
+# TRAIN
+# =========================
 def train(args):
+
     model_path = os.path.join(args.model_path, args.data_name)
-    if not os.path.isdir(model_path):
-        os.mkdir(model_path)
-   
-    train_log_path = f"{args.data_name}_train_log.txt"
-    f = open(train_log_path, "w" if args.resume_epoch == 0 else "a")
-    f.write(f"Data_name : {args.data_name}\n")
-    f.close()
-   
+    os.makedirs(model_path, exist_ok=True)
+
+    log_path = os.path.join(model_path, f"{args.data_name}_train_log.txt")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-   
+
     # Dataset
     tr_dataset = mydata(
-        img_path=args.train_data_path,
-        img_size=args.img_size,
-        km_file_path=args.km_file_path,
-        color_info=args.color_info,
+        args.train_data_path,
+        args.img_size,
+        args.km_file_path,
+        args.color_info
     )
-    tr_dataloader = DataLoader(
-        tr_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True
+
+    tr_loader = DataLoader(
+        tr_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        drop_last=True
     )
-   
+
     if args.test_with_train:
         te_dataset = mydata(
-            img_path=args.test_data_path,
-            img_size=args.img_size,
-            km_file_path=args.km_file_path,
-            color_info=args.color_info,
+            args.test_data_path,
+            args.img_size,
+            args.km_file_path,
+            args.color_info
         )
-        te_dataloader = DataLoader(
-            te_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False
+
+        te_loader = DataLoader(
+            te_dataset,
+            batch_size=args.batch_size,
+            shuffle=False
         )
-   
-    # Networks
+
+    # Models
     mem = Memory_Network(
-        mem_size=args.mem_size,
-        color_info=args.color_info,
-        color_feat_dim=args.color_feat_dim,
-        spatial_feat_dim=args.spatial_feat_dim,
-        top_k=args.top_k,
-        alpha=args.alpha,
+        args.mem_size,
+        args.color_info,
+        args.color_feat_dim,
+        args.spatial_feat_dim,
+        args.top_k,
+        args.alpha
     ).to(device)
+
     generator = unet_generator(
-        args.input_channel, args.output_channel, args.n_feats, args.color_feat_dim
+        args.input_channel,
+        args.output_channel,
+        args.n_feats,
+        args.color_feat_dim
     ).to(device)
+
     discriminator = Discriminator(
-        args.input_channel + args.output_channel, args.color_feat_dim, args.img_size
+        args.input_channel + args.output_channel,
+        args.color_feat_dim,
+        args.img_size
     ).to(device)
-   
+
     generator.train()
     discriminator.train()
-   
+
     # Loss
     criterion_GAN = nn.BCELoss()
-    criterion_sL1 = nn.SmoothL1Loss()
-   
-    real_labels = torch.ones((args.batch_size, 1)).to(device)
-    fake_labels = torch.zeros((args.batch_size, 1)).to(device)
-   
+    criterion_L1 = nn.SmoothL1Loss()
+
     # Optimizers
-    g_opt = optim.Adam(generator.parameters(), lr=args.lr)
-    d_opt = optim.Adam(discriminator.parameters(), lr=args.lr)
+    g_opt = optim.Adam(generator.parameters(), lr=args.lr, betas=(0.5,0.999))
+    d_opt = optim.Adam(discriminator.parameters(), lr=args.lr*0.5, betas=(0.5,0.999))
     m_opt = optim.Adam(mem.parameters(), lr=args.lr)
+
     opts = [g_opt, d_opt, m_opt]
-   
+
     # Resume
     start_epoch = 0
+    best_loss = float("inf")
+
     if args.resume_epoch > 0:
         ckpt_path = os.path.join(model_path, f"checkpoint_{args.resume_epoch:03d}.pt")
-        print(f"Resuming training from epoch {args.resume_epoch} ...")
+        print(f"Resuming from {ckpt_path}")
+
         ckpt = torch.load(ckpt_path, map_location=device)
-       
+
         generator.load_state_dict(ckpt["generator"])
         discriminator.load_state_dict(ckpt["discriminator"])
         mem.load_state_dict(ckpt["memory"])
+
         mem.spatial_key = ckpt["mem_key"].to(device)
         mem.color_value = ckpt["mem_value"].to(device)
         mem.age = ckpt["mem_age"].to(device)
         mem.top_index = ckpt["mem_index"].to(device)
-       
+
         g_opt.load_state_dict(ckpt["optimizer_g"])
         d_opt.load_state_dict(ckpt["optimizer_d"])
         m_opt.load_state_dict(ckpt["optimizer_m"])
-       
+
         start_epoch = ckpt["epoch"] + 1
-   
-    # Training loop
+
+    # Training Loop
     for e in range(start_epoch, args.epoch):
-        print(f'epoch {e}')
-        for i, batch in enumerate(tr_dataloader):
-            print(f'batch {i}')
+
+        epoch_g = 0
+        epoch_d = 0
+
+        print(f"\nEpoch {e}")
+        i = 0
+        for batch in tr_loader:
+            print(i)
+            i+=1
             res_input = batch["res_input"].to(device)
             color_feat = batch["color_feat"].to(device)
-            l_channel = (batch["l_channel"] / 255.0).to(device)
+
+            l_channel = (batch["l_channel"] / 100.0).to(device)
             ab_channel = (batch["ab_channel"] / 110.0).to(device)
+
             idx = batch["index"].to(device)
-           
-            # 1) Train Memory
+            bs = res_input.size(0)
+
+            real_labels = torch.ones((bs,1)).to(device)
+            fake_labels = torch.zeros((bs,1)).to(device)
+
+            # Memory Training
             res_feature = mem(res_input)
-            loss = mem.unsupervised_loss(res_feature, color_feat, args.color_thres)
+            mem_loss = mem.unsupervised_loss(res_feature, color_feat, args.color_thres)
+
             zero_grad(opts)
-            loss.backward()
+            mem_loss.backward()
             m_opt.step()
-           
-            # 2) Update Memory
+
             with torch.no_grad():
                 res_feature = mem(res_input)
                 mem.memory_update(res_feature, color_feat, args.color_thres, idx)
-           
-            # 3) Train Discriminator
-            dis_color_feat = torch.cat(
-                [torch.unsqueeze(color_feat, 2) for _ in range(args.img_size)], dim=2
-            )
-            dis_color_feat = torch.cat(
-                [torch.unsqueeze(dis_color_feat, 3) for _ in range(args.img_size)], dim=3
-            )
-            fake_ab_channel = generator(l_channel, color_feat)
-            real = discriminator(ab_channel, l_channel, dis_color_feat)
-            d_loss_real = criterion_GAN(real, real_labels)
-           
-            fake = discriminator(fake_ab_channel, l_channel, dis_color_feat)
-            d_loss_fake = criterion_GAN(fake, fake_labels)
-            d_loss = d_loss_real + d_loss_fake
-           
+
+            # Discriminator
+            dis_color_feat = color_feat.unsqueeze(2).unsqueeze(3)
+            dis_color_feat = dis_color_feat.repeat(1,1,args.img_size,args.img_size)
+
+            fake_ab = generator(l_channel, color_feat)
+
+            real_out = discriminator(ab_channel, l_channel, dis_color_feat)
+            fake_out = discriminator(fake_ab.detach(), l_channel, dis_color_feat)
+
+            d_loss = criterion_GAN(real_out, real_labels) + \
+                     criterion_GAN(fake_out, fake_labels)
+
             zero_grad(opts)
             d_loss.backward()
             d_opt.step()
-           
-            # 4) Train Generator
-            fake_ab_channel = generator(l_channel, color_feat)
-            fake = discriminator(fake_ab_channel, l_channel, dis_color_feat)
-            g_loss_GAN = criterion_GAN(fake, real_labels)
-           
-            g_loss_smoothL1 = criterion_sL1(fake_ab_channel, ab_channel)
-            g_loss = g_loss_GAN + g_loss_smoothL1
-           
+
+            # Generator
+            fake_ab = generator(l_channel, color_feat)
+            fake_out = discriminator(fake_ab, l_channel, dis_color_feat)
+
+            g_loss = criterion_GAN(fake_out, real_labels) + \
+                     criterion_L1(fake_ab, ab_channel)
+
             zero_grad(opts)
             g_loss.backward()
             g_opt.step()
-       
-        # Log
-        with open(train_log_path, "a") as f:
-            f.write(f"{e:04d}-epoch train loss")
-            f.write(f" g_loss : {g_loss.item():.4f}\t d_loss : {d_loss.item():.4f}\n")
-       
-        # Test
-        if args.test_with_train and (e + 1) % args.test_freq == 0:
+
+            epoch_g += g_loss.item()
+            epoch_d += d_loss.item()
+
+        epoch_g /= len(tr_loader)
+        epoch_d /= len(tr_loader)
+
+        print(f"G: {epoch_g:.4f} | D: {epoch_d:.4f}")
+
+        # log
+        with open(log_path, "a") as f:
+            f.write(f"Epoch {e} -> G: {epoch_g:.6f} D: {epoch_d:.6f}\n")
+
+        # Save best model (SMALL FILE)
+        if epoch_g < best_loss:
+
+            best_loss = epoch_g
+
+            torch.save({
+                "generator": generator.state_dict(),
+                "memory": mem.state_dict(),
+                "mem_key": mem.spatial_key.cpu(),
+                "mem_value": mem.color_value.cpu(),
+                "mem_age": mem.age.cpu(),
+                "mem_index": mem.top_index.cpu()
+            }, os.path.join(model_path,"best_model.pt"))
+
+            print("Best model saved")
+
+        # Save checkpoint (LARGE FILE)
+        if (e+1) % args.model_save_freq == 0:
+
+            torch.save({
+                "epoch":e,
+                "generator":generator.state_dict(),
+                "discriminator":discriminator.state_dict(),
+                "memory":mem.state_dict(),
+                "mem_key":mem.spatial_key.cpu(),
+                "mem_value":mem.color_value.cpu(),
+                "mem_age":mem.age.cpu(),
+                "mem_index":mem.top_index.cpu(),
+                "optimizer_g":g_opt.state_dict(),
+                "optimizer_d":d_opt.state_dict(),
+                "optimizer_m":m_opt.state_dict(),
+            }, os.path.join(model_path,f"checkpoint_{e:03d}.pt"))
+
+        # validation
+        if args.test_with_train and (e+1)%args.test_freq==0:
             generator.eval()
-            test_operation(args, generator, mem, te_dataloader, device, e)
+            test_operation(args,generator,mem,te_loader,device,e)
             generator.train()
-       
-        # Save checkpoint
-        if (e + 1) % args.model_save_freq == 0:
-            save_path = os.path.join(model_path, f"checkpoint_{e:03d}.pt")
-            torch.save(
-                {
-                    "epoch": e,
-                    "generator": generator.state_dict(),
-                    "discriminator": discriminator.state_dict(),
-                    "memory": mem.state_dict(),
-                    "mem_key": mem.spatial_key.cpu(),
-                    "mem_value": mem.color_value.cpu(),
-                    "mem_age": mem.age.cpu(),
-                    "mem_index": mem.top_index.cpu(),
-                    "optimizer_g": g_opt.state_dict(),
-                    "optimizer_d": d_opt.state_dict(),
-                    "optimizer_m": m_opt.state_dict(),
-                },
-                save_path,
-            )
-
-
-
 
 
 

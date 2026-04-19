@@ -108,7 +108,7 @@ class Memory_Network(nn.Module):
         self.age[case_index] = 0.0
         
         ## Case 2
-	memory_mask = ~memory_mask
+        memory_mask = ~memory_mask
         case_index = top1_index[memory_mask]
         
         random_noise = random_uniform((self.mem_size, 1), -self.age_noise, self.age_noise)[:, 0]
@@ -118,7 +118,7 @@ class Memory_Network(nn.Module):
         
         self.spatial_key[old_index] = query[memory_mask]
         self.color_value[old_index] = color_feat[memory_mask]
-        self.top_index[old_index] = top_index[memory_mask]
+        self.top_index[old_index] = top_index[memory_mask].float()
         self.age[old_index] = 0.0
         
     

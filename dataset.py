@@ -3,7 +3,7 @@ from torch.utils.data import Dataset
 import os
 from PIL import Image
 import numpy as np
-from skimage.color import rgb2lab, lab2rgb
+from skimage.color import rgb2lab
 from util import NNEncode, encode_313bin
 
 
@@ -19,13 +19,11 @@ class mydata(Dataset):
         sigma=5.0,
     ):
         """
-        Expected folder structure:
+        Folder structure:
 
         img_path/
             SAR/
             OPT/
-
-        Filenames must match.
         """
 
         self.img_size = img_size
@@ -36,8 +34,9 @@ class mydata(Dataset):
 
         self.img = sorted(os.listdir(self.sar_path))
 
-        self.res_normalize_mean = [0.485, 0.456, 0.406]
-        self.res_normalize_std = [0.229, 0.224, 0.225]
+        # normalization for ResNet input
+        self.res_mean = np.array([0.485, 0.456, 0.406])
+        self.res_std = np.array([0.229, 0.224, 0.225])
 
         if self.color_info == "dist":
             self.nnenc = NNEncode(NN, sigma, km_filepath=km_file_path)
@@ -46,62 +45,57 @@ class mydata(Dataset):
         return len(self.img)
 
     def __getitem__(self, i):
-        img_item = {}
-
         name = self.img[i]
 
         # -------------------------
         # 1. LOAD SAR (INPUT)
         # -------------------------
-        sar_img = Image.open(
-            os.path.join(self.sar_path, name)
-        ).convert("L")  # SAR is grayscale
+        sar = Image.open(os.path.join(self.sar_path, name)).convert("L")
+        sar = sar.resize((self.img_size, self.img_size), Image.LANCZOS)
+        sar_np = np.array(sar).astype(np.float32)
+
+        # normalize SAR to [0,1]
+        sar_norm = sar_np / 255.0
 
         # -------------------------
         # 2. LOAD OPTICAL (TARGET)
         # -------------------------
-        rgb_image = Image.open(
-            os.path.join(self.opt_path, name)
-        ).convert("RGB")
-
-        # resize
-        sar_img = sar_img.resize((self.img_size, self.img_size), Image.LANCZOS)
-        rgb_image = rgb_image.resize((self.img_size, self.img_size), Image.LANCZOS)
-
-        sar_np = np.array(sar_img)
-        rgb_np = np.array(rgb_image)
+        rgb = Image.open(os.path.join(self.opt_path, name)).convert("RGB")
+        rgb = rgb.resize((self.img_size, self.img_size), Image.LANCZOS)
+        rgb_np = np.array(rgb).astype(np.float32)
 
         # -------------------------
         # 3. LAB from optical
         # -------------------------
-        lab_image = rgb2lab(rgb_np)
-        l_image = sar_np[:, :, np.newaxis]  # <-- SAR replaces L channel
-        ab_image = lab_image[:, :, 1:]
+        lab = rgb2lab(rgb_np / 255.0)
+
+        # IMPORTANT: scale SAR → LAB L range
+        l = sar_norm * 100.0  # now in [0,100]
+        l = l[:, :, np.newaxis]
+
+        ab = lab[:, :, 1:]
 
         # -------------------------
         # 4. color feature
         # -------------------------
         if self.color_info == "dist":
             color_feat = encode_313bin(
-                np.expand_dims(ab_image, axis=0), self.nnenc
+                np.expand_dims(ab, axis=0), self.nnenc
             )[0]
             color_feat = np.mean(color_feat, axis=(0, 1))
-
         else:
-            color_feat = np.zeros(313)
+            color_feat = np.zeros(313, dtype=np.float32)
 
         # -------------------------
         # 5. ResNet input (from SAR)
         # -------------------------
-        gray_rgb = np.repeat(sar_np[:, :, np.newaxis], 3, axis=2) / 255.0
-        res_input = (gray_rgb - self.res_normalize_mean) / self.res_normalize_std
+        gray_rgb = np.repeat(sar_norm[:, :, np.newaxis], 3, axis=2)
+        res_input = (gray_rgb - self.res_mean) / self.res_std
 
-        index = i + 0.0
-
-        img_item["l_channel"] = np.transpose(l_image, (2, 0, 1)).astype(np.float32)
-        img_item["ab_channel"] = np.transpose(ab_image, (2, 0, 1)).astype(np.float32)
-        img_item["color_feat"] = color_feat.astype(np.float32)
-        img_item["res_input"] = np.transpose(res_input, (2, 0, 1)).astype(np.float32)
-        img_item["index"] = np.array(([index])).astype(np.float32)[0]
-
-        return img_item
+        return {
+            "l_channel": np.transpose(l, (2, 0, 1)).astype(np.float32),
+            "ab_channel": np.transpose(ab, (2, 0, 1)).astype(np.float32),
+            "color_feat": color_feat.astype(np.float32),
+            "res_input": np.transpose(res_input, (2, 0, 1)).astype(np.float32),
+            "index": float(i),
+        }
