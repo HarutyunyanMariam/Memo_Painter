@@ -28,9 +28,9 @@ class Discriminator(nn.Module):
         self.conv1 = nn.Conv2d(curr_dim, curr_dim, kernel_size=3, stride=1, padding=1, bias=False)
 
         self.fc = nn.Sequential(
-            nn.BatchNorm1d(k_size * k_size * curr_dim),
+     #       nn.BatchNorm1d(k_size * k_size * curr_dim),
             nn.Linear(k_size * k_size * curr_dim, 1),
-            nn.Sigmoid(),
+     #       nn.Sigmoid(),
         )
 
     def forward(self, ab_img, l_img, color_feat):

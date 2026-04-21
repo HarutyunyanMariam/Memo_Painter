@@ -83,12 +83,12 @@ def train(args):
     discriminator.train()
 
     # Loss
-    criterion_GAN = nn.BCELoss()
+    criterion_GAN = nn.BCEWithLogitsLoss()
     criterion_L1 = nn.SmoothL1Loss()
 
     # Optimizers
     g_opt = optim.Adam(generator.parameters(), lr=args.lr, betas=(0.5,0.999))
-    d_opt = optim.Adam(discriminator.parameters(), lr=args.lr*0.5, betas=(0.5,0.999))
+    d_opt = optim.Adam(discriminator.parameters(), lr=args.lr*2, betas=(0.5,0.999))
     m_opt = optim.Adam(mem.parameters(), lr=args.lr)
 
     opts = [g_opt, d_opt, m_opt]
